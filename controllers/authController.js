@@ -1,6 +1,6 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const { authenticator } = require('otplib');
+const { generateSecret, verify, generateURI } = require('otplib');
 const qrcode = require('qrcode');
 const User = require('../models/userModel');
 
@@ -147,8 +147,8 @@ const authController = {
         return res.status(404).json({ error: 'Usuário não encontrado.' });
       }
 
-      const secret = authenticator.generateSecret();
-      const otpAuthUrl = authenticator.keyuri(user.email, 'Genjoy', secret);
+      const secret = generateSecret();
+      const otpAuthUrl = generateURI({ secret, label: user.email, issuer: 'Genjoy' });
       const qrCodeDataUrl = await qrcode.toDataURL(otpAuthUrl);
 
       // Save secret temporarily (not fully enabled yet)
@@ -181,12 +181,12 @@ const authController = {
         return res.status(400).json({ error: 'Nenhum segredo de 2FA foi gerado. Inicie o setup primeiro.' });
       }
 
-      const isVerified = authenticator.verify({
+      const result = await verify({
         token,
         secret: user.two_factor_secret
       });
 
-      if (!isVerified) {
+      if (!result.valid) {
         return res.status(400).json({ error: 'Código inválido. Tente novamente.' });
       }
 
@@ -229,12 +229,12 @@ const authController = {
         return res.status(400).json({ error: '2FA já está desativado para esta conta.' });
       }
 
-      const isVerified = authenticator.verify({
+      const result = await verify({
         token,
         secret: user.two_factor_secret
       });
 
-      if (!isVerified) {
+      if (!result.valid) {
         return res.status(400).json({ error: 'Código inválido. Tente novamente.' });
       }
 
@@ -285,12 +285,12 @@ const authController = {
         return res.status(400).json({ error: 'Usuário inválido ou 2FA não ativado.' });
       }
 
-      const isVerified = authenticator.verify({
+      const result = await verify({
         token,
         secret: user.two_factor_secret
       });
 
-      if (!isVerified) {
+      if (!result.valid) {
         return res.status(400).json({ error: 'Código 2FA inválido ou expirado.' });
       }
 
