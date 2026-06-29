@@ -18,6 +18,17 @@ app.use(express.json());
 app.use('/api/products', productRoutes);
 app.use('/api/auth', authRoutes);
 
+const db = require('./config/database');
+app.get('/api/categories', async (req, res) => {
+  try {
+    const { rows } = await db.query('SELECT * FROM categories ORDER BY id ASC');
+    res.json(rows);
+  } catch (error) {
+    console.error('Erro ao buscar categorias:', error);
+    res.status(500).json({ error: 'Erro interno ao buscar categorias.' });
+  }
+});
+
 // Base route for server checking
 app.get('/', (req, res) => {
   res.json({
