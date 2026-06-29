@@ -22,8 +22,21 @@ const User = {
 
   // Find a user by ID
   findById: async (id) => {
-    const queryText = 'SELECT id, name, email, created_at FROM users WHERE id = $1';
+    const queryText = 'SELECT id, name, email, created_at, two_factor_secret, is_two_factor_enabled FROM users WHERE id = $1';
     const { rows } = await db.query(queryText, [id]);
+    return rows[0];
+  },
+
+  // Update Two-Factor Authentication fields
+  update2FA: async (id, { secret, enabled }) => {
+    const queryText = `
+      UPDATE users
+      SET two_factor_secret = $1, is_two_factor_enabled = $2
+      WHERE id = $3
+      RETURNING id, name, email, created_at, two_factor_secret, is_two_factor_enabled
+    `;
+    const values = [secret, enabled, id];
+    const { rows } = await db.query(queryText, values);
     return rows[0];
   }
 };

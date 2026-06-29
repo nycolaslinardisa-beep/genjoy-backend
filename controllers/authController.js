@@ -1,5 +1,7 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const { authenticator } = require('otplib');
+const qrcode = require('qrcode');
 const User = require('../models/userModel');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'genjoy_jwt_secret_key_123';
@@ -76,7 +78,23 @@ const authController = {
         return res.status(400).json({ error: 'E-mail ou senha incorretos.' });
       }
 
-      // Generate JWT Token
+      // Check if 2FA is enabled
+      if (user.is_two_factor_enabled) {
+        // Generate a short-lived temp token for 2FA validation step
+        const tempToken = jwt.sign(
+          { id: user.id, temp: true },
+          JWT_SECRET,
+          { expiresIn: '5m' } // 5 minutes
+        );
+
+        return res.json({
+          requires2FA: true,
+          tempToken,
+          message: 'Autenticação de dois fatores requerida.'
+        });
+      }
+
+      // Generate final JWT Token
       const token = jwt.sign(
         { id: user.id, name: user.name, email: user.email },
         JWT_SECRET,
@@ -91,6 +109,7 @@ const authController = {
           name: user.name,
           email: user.email,
           created_at: user.created_at,
+          is_two_factor_enabled: false
         },
       });
     } catch (error) {
@@ -107,10 +126,195 @@ const authController = {
       if (!user) {
         return res.status(404).json({ error: 'Usuário não encontrado.' });
       }
-      res.json(user);
+      res.json({
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        created_at: user.created_at,
+        is_two_factor_enabled: user.is_two_factor_enabled
+      });
     } catch (error) {
       console.error('Erro ao buscar perfil:', error);
       res.status(500).json({ error: 'Erro interno ao validar token.' });
+    }
+  },
+
+  // POST /api/auth/2fa/setup (Generate secret and QR Code for setup)
+  setup2FA: async (req, res) => {
+    try {
+      const user = await User.findById(req.user.id);
+      if (!user) {
+        return res.status(404).json({ error: 'Usuário não encontrado.' });
+      }
+
+      const secret = authenticator.generateSecret();
+      const otpAuthUrl = authenticator.keyuri(user.email, 'Genjoy', secret);
+      const qrCodeDataUrl = await qrcode.toDataURL(otpAuthUrl);
+
+      // Save secret temporarily (not fully enabled yet)
+      await User.update2FA(user.id, { secret, enabled: false });
+
+      res.json({
+        secret,
+        qrCode: qrCodeDataUrl
+      });
+    } catch (error) {
+      console.error('Erro no setup do 2FA:', error);
+      res.status(500).json({ error: 'Erro ao configurar autenticação de dois fatores.' });
+    }
+  },
+
+  // POST /api/auth/2fa/enable (Confirm and enable 2FA after successful validation)
+  enable2FA: async (req, res) => {
+    try {
+      const { token } = req.body;
+      if (!token) {
+        return res.status(400).json({ error: 'Código de verificação de 6 dígitos é obrigatório.' });
+      }
+
+      const user = await User.findById(req.user.id);
+      if (!user) {
+        return res.status(404).json({ error: 'Usuário não encontrado.' });
+      }
+
+      if (!user.two_factor_secret) {
+        return res.status(400).json({ error: 'Nenhum segredo de 2FA foi gerado. Inicie o setup primeiro.' });
+      }
+
+      const isVerified = authenticator.verify({
+        token,
+        secret: user.two_factor_secret
+      });
+
+      if (!isVerified) {
+        return res.status(400).json({ error: 'Código inválido. Tente novamente.' });
+      }
+
+      // Fully enable 2FA
+      const updatedUser = await User.update2FA(user.id, {
+        secret: user.two_factor_secret,
+        enabled: true
+      });
+
+      res.json({
+        message: 'Autenticação de dois fatores ativada com sucesso!',
+        user: {
+          id: updatedUser.id,
+          name: updatedUser.name,
+          email: updatedUser.email,
+          created_at: updatedUser.created_at,
+          is_two_factor_enabled: true
+        }
+      });
+    } catch (error) {
+      console.error('Erro ao ativar 2FA:', error);
+      res.status(500).json({ error: 'Erro ao ativar autenticação de dois fatores.' });
+    }
+  },
+
+  // POST /api/auth/2fa/disable (Disable 2FA)
+  disable2FA: async (req, res) => {
+    try {
+      const { token } = req.body;
+      if (!token) {
+        return res.status(400).json({ error: 'Código de verificação de 6 dígitos é obrigatório.' });
+      }
+
+      const user = await User.findById(req.user.id);
+      if (!user) {
+        return res.status(404).json({ error: 'Usuário não encontrado.' });
+      }
+
+      if (!user.is_two_factor_enabled) {
+        return res.status(400).json({ error: '2FA já está desativado para esta conta.' });
+      }
+
+      const isVerified = authenticator.verify({
+        token,
+        secret: user.two_factor_secret
+      });
+
+      if (!isVerified) {
+        return res.status(400).json({ error: 'Código inválido. Tente novamente.' });
+      }
+
+      // Disable 2FA
+      const updatedUser = await User.update2FA(user.id, {
+        secret: null,
+        enabled: false
+      });
+
+      res.json({
+        message: 'Autenticação de dois fatores desativada com sucesso!',
+        user: {
+          id: updatedUser.id,
+          name: updatedUser.name,
+          email: updatedUser.email,
+          created_at: updatedUser.created_at,
+          is_two_factor_enabled: false
+        }
+      });
+    } catch (error) {
+      console.error('Erro ao desativar 2FA:', error);
+      res.status(500).json({ error: 'Erro ao desativar autenticação de dois fatores.' });
+    }
+  },
+
+  // POST /api/auth/2fa/login-2fa (Complete login using TOTP token)
+  login2FA: async (req, res) => {
+    try {
+      const { tempToken, token } = req.body;
+      if (!tempToken || !token) {
+        return res.status(400).json({ error: 'Token temporário e código 2FA são obrigatórios.' });
+      }
+
+      // Verify the tempToken
+      let decoded;
+      try {
+        decoded = jwt.verify(tempToken, JWT_SECRET);
+      } catch (err) {
+        return res.status(401).json({ error: 'Sessão expirada. Por favor, faça login novamente.' });
+      }
+
+      if (!decoded.temp) {
+        return res.status(400).json({ error: 'Token de autenticação inválido.' });
+      }
+
+      const user = await User.findById(decoded.id);
+      if (!user || !user.is_two_factor_enabled) {
+        return res.status(400).json({ error: 'Usuário inválido ou 2FA não ativado.' });
+      }
+
+      const isVerified = authenticator.verify({
+        token,
+        secret: user.two_factor_secret
+      });
+
+      if (!isVerified) {
+        return res.status(400).json({ error: 'Código 2FA inválido ou expirado.' });
+      }
+
+      // Generate final JWT Token
+      const finalToken = jwt.sign(
+        { id: user.id, name: user.name, email: user.email },
+        JWT_SECRET,
+        { expiresIn: '7d' }
+      );
+
+      res.json({
+        message: 'Login realizado com sucesso!',
+        token: finalToken,
+        user: {
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          created_at: user.created_at,
+          is_two_factor_enabled: true
+        },
+      });
+    } catch (error) {
+      console.error('Erro no login do 2FA:', error);
+      res.status(500).json({ error: 'Erro interno ao autenticar com 2FA.' });
     }
   }
 };
