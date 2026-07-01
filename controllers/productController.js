@@ -33,7 +33,7 @@ const productController = {
   // POST /api/products
   createProduct: async (req, res) => {
     try {
-      const { name, description, original_price, promo_price, image_url, category, stock } = req.body;
+      const { name, description, original_price, promo_price, category, stock } = req.body;
 
       // Basic validation
       if (!name || original_price === undefined || original_price === null || !category) {
@@ -54,12 +54,19 @@ const productController = {
         return res.status(400).json({ error: 'O estoque deve ser um número maior ou igual a zero.' });
       }
 
+      if (!req.file) {
+        return res.status(400).json({ error: 'O arquivo de imagem é obrigatório.' });
+      }
+
+      const base64Image = req.file.buffer.toString('base64');
+      const image_url = `data:${req.file.mimetype};base64,${base64Image}`;
+
       const newProduct = await Product.create({
         name,
         description,
-        original_price,
-        promo_price: (promo_price !== undefined && promo_price !== null && promo_price !== '') ? promo_price : null,
-        image_url: image_url || 'https://images.unsplash.com/photo-1531403009284-440f080d1e12?w=800&auto=format&fit=crop&q=80', // generic tech image placeholder
+        original_price: parseFloat(original_price),
+        promo_price: (promo_price !== undefined && promo_price !== null && promo_price !== '') ? parseFloat(promo_price) : null,
+        image_url,
         category,
         stock: stock ? parseInt(stock) : 0,
       });
@@ -75,7 +82,7 @@ const productController = {
   updateProduct: async (req, res) => {
     try {
       const { id } = req.params;
-      const { name, description, original_price, promo_price, image_url, category, stock } = req.body;
+      const { name, description, original_price, promo_price, category, stock } = req.body;
 
       // Check if product exists
       const existingProduct = await Product.findById(id);
@@ -102,12 +109,18 @@ const productController = {
         return res.status(400).json({ error: 'O estoque deve ser um número maior ou igual a zero.' });
       }
 
+      let image_url = existingProduct.image_url;
+      if (req.file) {
+        const base64Image = req.file.buffer.toString('base64');
+        image_url = `data:${req.file.mimetype};base64,${base64Image}`;
+      }
+
       const updatedProduct = await Product.update(id, {
         name,
         description,
-        original_price,
-        promo_price: (promo_price !== undefined && promo_price !== null && promo_price !== '') ? promo_price : null,
-        image_url: image_url || existingProduct.image_url,
+        original_price: parseFloat(original_price),
+        promo_price: (promo_price !== undefined && promo_price !== null && promo_price !== '') ? parseFloat(promo_price) : null,
+        image_url,
         category,
         stock: parseInt(stock),
       });
