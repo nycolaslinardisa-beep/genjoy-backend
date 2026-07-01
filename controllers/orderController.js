@@ -83,7 +83,7 @@ const orderController = {
     }
   },
 
-  // PUT /api/orders/:id/status - Update order status and subtract stock on Concluído
+  // PUT /api/orders/:id/status - Update order status and subtract/return stock
   updateOrderStatus: async (req, res) => {
     const client = await db.connect();
     try {
@@ -110,8 +110,10 @@ const orderController = {
       const updateStatusQuery = 'UPDATE orders SET status = $1 WHERE id = $2 RETURNING *';
       const updateResult = await client.query(updateStatusQuery, [status, id]);
 
-      // If transition to Concluído and wasn't already completed, decrease stock
-      if (status === 'Concluído' && currentStatus !== 'Concluído') {
+      const isCompleted = (s) => s === 'Aprovado' || s === 'Concluído';
+
+      // Rule 1: Pendente -> Aprovado (or Concluído): subtract stock
+      if (isCompleted(status) && !isCompleted(currentStatus)) {
         // Fetch items
         const itemsQuery = 'SELECT product_id, quantity FROM order_items WHERE order_id = $1';
         const itemsRes = await client.query(itemsQuery, [id]);
@@ -120,6 +122,19 @@ const orderController = {
         const updateStockQuery = 'UPDATE products SET stock = GREATEST(0, stock - $1) WHERE id = $2';
         for (const item of itemsRes.rows) {
           await client.query(updateStockQuery, [item.quantity, item.product_id]);
+        }
+      }
+
+      // Rule 2: Aprovado (or Concluído) -> Cancelado: return/restore stock
+      if (status === 'Cancelado' && isCompleted(currentStatus)) {
+        // Fetch items
+        const itemsQuery = 'SELECT product_id, quantity FROM order_items WHERE order_id = $1';
+        const itemsRes = await client.query(itemsQuery, [id]);
+
+        // Restore each product stock
+        const restoreStockQuery = 'UPDATE products SET stock = stock + $1 WHERE id = $2';
+        for (const item of itemsRes.rows) {
+          await client.query(restoreStockQuery, [item.quantity, item.product_id]);
         }
       }
 
