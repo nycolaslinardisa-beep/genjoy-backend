@@ -13,5 +13,10 @@ const pool = new Pool({
   }
 });
 
+// Evita crash do processo Node por erros inesperados de conexões ociosas (idle clients)
+pool.on('error', (err) => {
+  console.error('Erro inesperado no cliente ocioso do banco de dados:', err);
+});
+
 module.exports = pool;
 

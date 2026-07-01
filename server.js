@@ -2,6 +2,16 @@ const express = require('express');
 const cors = require('cors');
 require('dotenv').config();
 
+// Evita crash do processo Node por promessas não capturadas ou exceções
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Rejeição não tratada no servidor:', promise, 'motivo:', reason);
+});
+
+process.on('uncaughtException', (error) => {
+  console.error('Exceção não tratada no servidor:', error);
+});
+
+
 const productRoutes = require('./routes/productRoutes');
 const authRoutes = require('./routes/authRoutes');
 
@@ -22,6 +32,9 @@ const db = require('./config/database');
 app.get('/api/categories', async (req, res) => {
   try {
     const { rows } = await db.query('SELECT * FROM categories ORDER BY id ASC');
+    if (!rows || rows.length === 0) {
+      return res.status(500).json({ error: 'Nenhuma categoria encontrada ou banco de dados vazio.' });
+    }
     res.json(rows);
   } catch (error) {
     console.error('Erro ao buscar categorias:', error);
