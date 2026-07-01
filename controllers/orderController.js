@@ -94,7 +94,7 @@ const orderController = {
         return res.status(400).json({ error: 'O status do pedido é obrigatório.' });
       }
 
-      // Check current order status
+      // Check current/old order status
       const orderQuery = 'SELECT status FROM orders WHERE id = $1';
       const orderRes = await client.query(orderQuery, [id]);
 
@@ -102,18 +102,18 @@ const orderController = {
         return res.status(404).json({ error: 'Pedido não encontrado.' });
       }
 
-      const currentStatus = orderRes.rows[0].status;
+      const oldStatus = orderRes.rows[0].status;
+      const newStatus = status;
+
+      // Shield: Return immediately if status has not changed to avoid duplicate logic/clicks
+      if (newStatus === oldStatus) {
+        return res.status(200).json(orderRes.rows[0]);
+      }
 
       await client.query('BEGIN');
 
-      // Update status
-      const updateStatusQuery = 'UPDATE orders SET status = $1 WHERE id = $2 RETURNING *';
-      const updateResult = await client.query(updateStatusQuery, [status, id]);
-
-      const isCompleted = (s) => s === 'Aprovado' || s === 'Concluído';
-
-      // Rule 1: Pendente -> Aprovado (or Concluído): subtract stock
-      if (isCompleted(status) && !isCompleted(currentStatus)) {
+      // Rule 1: newStatus === 'Aprovado' && oldStatus === 'Pendente' -> SUBTRACT stock
+      if (newStatus === 'Aprovado' && oldStatus === 'Pendente') {
         // Fetch items
         const itemsQuery = 'SELECT product_id, quantity FROM order_items WHERE order_id = $1';
         const itemsRes = await client.query(itemsQuery, [id]);
@@ -125,8 +125,8 @@ const orderController = {
         }
       }
 
-      // Rule 2: Aprovado (or Concluído) -> Cancelado: return/restore stock
-      if (status === 'Cancelado' && isCompleted(currentStatus)) {
+      // Rule 2: (newStatus === 'Cancelado' || newStatus === 'Pendente') && oldStatus === 'Aprovado' -> RESTORE stock
+      if ((newStatus === 'Cancelado' || newStatus === 'Pendente') && oldStatus === 'Aprovado') {
         // Fetch items
         const itemsQuery = 'SELECT product_id, quantity FROM order_items WHERE order_id = $1';
         const itemsRes = await client.query(itemsQuery, [id]);
@@ -137,6 +137,10 @@ const orderController = {
           await client.query(restoreStockQuery, [item.quantity, item.product_id]);
         }
       }
+
+      // Update status
+      const updateStatusQuery = 'UPDATE orders SET status = $1 WHERE id = $2 RETURNING *';
+      const updateResult = await client.query(updateStatusQuery, [newStatus, id]);
 
       await client.query('COMMIT');
       res.json(updateResult.rows[0]);
