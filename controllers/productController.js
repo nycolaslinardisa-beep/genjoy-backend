@@ -33,15 +33,21 @@ const productController = {
   // POST /api/products
   createProduct: async (req, res) => {
     try {
-      const { name, description, price, image_url, category, stock } = req.body;
+      const { name, description, original_price, promo_price, image_url, category, stock } = req.body;
 
       // Basic validation
-      if (!name || !price || !category) {
-        return res.status(400).json({ error: 'Os campos nome, preço e categoria são obrigatórios.' });
+      if (!name || original_price === undefined || original_price === null || !category) {
+        return res.status(400).json({ error: 'Os campos nome, preço anterior e categoria são obrigatórios.' });
       }
 
-      if (isNaN(price) || price < 0) {
-        return res.status(400).json({ error: 'O preço deve ser um número maior ou igual a zero.' });
+      if (isNaN(original_price) || original_price < 0) {
+        return res.status(400).json({ error: 'O preço anterior deve ser um número maior ou igual a zero.' });
+      }
+
+      if (promo_price !== undefined && promo_price !== null && promo_price !== '') {
+        if (isNaN(promo_price) || promo_price < 0) {
+          return res.status(400).json({ error: 'O preço promocional deve ser um número maior ou igual a zero.' });
+        }
       }
 
       if (stock !== undefined && (isNaN(stock) || stock < 0)) {
@@ -51,7 +57,8 @@ const productController = {
       const newProduct = await Product.create({
         name,
         description,
-        price,
+        original_price,
+        promo_price: (promo_price !== undefined && promo_price !== null && promo_price !== '') ? promo_price : null,
         image_url: image_url || 'https://images.unsplash.com/photo-1531403009284-440f080d1e12?w=800&auto=format&fit=crop&q=80', // generic tech image placeholder
         category,
         stock: stock ? parseInt(stock) : 0,
@@ -68,7 +75,7 @@ const productController = {
   updateProduct: async (req, res) => {
     try {
       const { id } = req.params;
-      const { name, description, price, image_url, category, stock } = req.body;
+      const { name, description, original_price, promo_price, image_url, category, stock } = req.body;
 
       // Check if product exists
       const existingProduct = await Product.findById(id);
@@ -77,12 +84,18 @@ const productController = {
       }
 
       // Basic validation
-      if (!name || !price || !category) {
-        return res.status(400).json({ error: 'Os campos nome, preço e categoria são obrigatórios.' });
+      if (!name || original_price === undefined || original_price === null || !category) {
+        return res.status(400).json({ error: 'Os campos nome, preço anterior e categoria são obrigatórios.' });
       }
 
-      if (isNaN(price) || price < 0) {
-        return res.status(400).json({ error: 'O preço deve ser um número maior ou igual a zero.' });
+      if (isNaN(original_price) || original_price < 0) {
+        return res.status(400).json({ error: 'O preço anterior deve ser um número maior ou igual a zero.' });
+      }
+
+      if (promo_price !== undefined && promo_price !== null && promo_price !== '') {
+        if (isNaN(promo_price) || promo_price < 0) {
+          return res.status(400).json({ error: 'O preço promocional deve ser um número maior ou igual a zero.' });
+        }
       }
 
       if (stock !== undefined && (isNaN(stock) || stock < 0)) {
@@ -92,7 +105,8 @@ const productController = {
       const updatedProduct = await Product.update(id, {
         name,
         description,
-        price,
+        original_price,
+        promo_price: (promo_price !== undefined && promo_price !== null && promo_price !== '') ? promo_price : null,
         image_url: image_url || existingProduct.image_url,
         category,
         stock: parseInt(stock),
